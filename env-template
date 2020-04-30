@@ -1,0 +1,7 @@
+API_KEY=
+API_SECRET=
+APPLICATION_ID=
+PRIVATE_KEY=
+SENDER_LVN=<from-number-for-sending-sms>
+BRAND=<your-brand-to-appear-in-verify-sms>
+WORKFLOW_ID=<verify-workflow-id>
