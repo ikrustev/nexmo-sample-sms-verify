@@ -3,6 +3,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const Nexmo = require('nexmo');
 const numbers = require('./numbers').create();
+const rides = require('./rides').create();
 const BRAND = process.env.BRAND;
 const WORKFLOW_ID = process.env.WORKFLOW_ID || 6;
 
@@ -19,11 +20,38 @@ function getSender() {
 }
 
 const app = express();
-app.use(bodyParser.json({ type: "*/*"}));
+app.use(bodyParser.json({ type: "application/json"}));
 app.use(bodyParser.urlencoded({ extended: true }));
+
+function sendSms(from, to, text, callback) {
+    nexmo.message.sendSms(from, to, text, callback);
+}
+
+function handleIncomingSms(sms) {
+    const from = sms.msisdn;
+    if (!from) {
+        console.warn("Missing from for message id", sms.messageId);
+        return;
+    }
+    if (sms.type !== 'text' && sms.type !== 'unicode') {
+        sendSms(sms.to, from, "Only text messages are supported!");
+    }
+    const ride = rides.getByNumber(from);
+    if (!ride) {
+        sendSms(sms.to, from, "Your ride has ended. Have a nice day!");
+        return;
+    }
+    const to = rides.getParty(ride, from);
+    if (!to) {
+        sendSms(sms.to, from, "Something wrong happened. Please call support and report this id: " + ride.id);
+        return;
+    }
+    sendSms(ride.proxy, to, sms.text);
+}
 
 app.post('/webhooks/messages/inbound', (req, res) => {
     console.log(req.body);
+    handleIncomingSms(req.body);
     res.status(200).end();
 });
 
@@ -49,6 +77,9 @@ app.post('/api/numbers', (req, res) => {
         respondError(res, 400, e);
         return;
     }
+    // number.state = 'verified';
+    // respondOk(res, number);
+    // return;
     nexmo.verify.request({
         number: number.e164,
         brand: BRAND,
@@ -164,6 +195,67 @@ app.delete('/api/numbers/:e164', (req, res) => {
             console.log("Cancel result", result);
         }
     });
+});
+
+function getVerified(res, role, e164) {
+    const number = numbers.get(e164);
+    if (!number) {
+        throw "Number not found: " + e164;
+    }
+    if (number.state !== 'verified') {
+        throw "Number not verified: " + e164;
+    }
+    return number;
+}
+
+function sendLogCallback(err, result) {
+    if (err) {
+        console.error("Send failed: ", err);
+    } else {
+        console.log("Sent: ", result);
+    }
+}
+
+app.post('/api/rides', (req, res) => {
+    let passenger, driver;
+    try {
+        passenger = getVerified(res, "Passenger", req.body.passenger);
+        driver = getVerified(res, "Passenger", req.body.passenger);
+    } catch (e) {
+        respondError(res, 400, e);
+        return;
+    }
+    let ride;
+    try {
+        ride = rides.create(passenger.e164, driver.e164, getSender());
+    } catch (e) {
+        respondError(res, 400, e);
+        return;
+    }
+    sendSms(ride.proxy, ride.passenger, "I'm on my way. It's pleasure for me to serve you today.", sendLogCallback);
+    sendSms(ride.proxy, ride.driver, "You have been assigned ride id: " + ride.id, sendLogCallback);
+    respondOk(res, ride);
+});
+
+app.delete('/api/rides/:id', (req, res) => {
+    const id = req.params.id;
+    const ride = rides.getById(id);
+    if (!ride) {
+        respondError(res, 404, "Unknown ride");
+        return;
+    }
+    rides.remove(id);
+    respondOk(res, ride);
+});
+
+app.get('/api/rides/:id', (req, res) => {
+    const id = req.params.id;
+    const ride = rides.getById(id);
+    if (!ride) {
+        respondError(res, 404, "Unknown ride");
+        return;
+    }
+    respondOk(res, ride);
 });
 
 app.listen(3000)

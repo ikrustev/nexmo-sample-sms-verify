@@ -23,9 +23,8 @@ function createInstance() {
     function remove(e164) {
         const number = store[e164];
         if (number) {
-            return delete store[e164];
+            delete store[e164];
         }
-        return number;
     }
 
     return {
